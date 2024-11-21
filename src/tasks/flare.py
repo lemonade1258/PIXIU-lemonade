@@ -13,6 +13,8 @@ import evaluate
 import re
 from factscore_package.factscorer import FactScorer
 import os
+import jieba
+from rouge_chinese import Rouge
 #from comet import download_model, load_from_checkpoint
 
 _CITATION = """
@@ -307,7 +309,7 @@ class AbstractiveSummarization(Task):
             "rouge2": (doc["answer"], results[0]),
             "rougeL": (doc["answer"], results[0]),
             "bert_score_f1": (doc["answer"], results[0]),
-            "bart_score": (doc["answer"], results[0]),
+            # "bart_score": (doc["answer"], results[0]),
         }
 
     def higher_is_better(self):
@@ -316,7 +318,7 @@ class AbstractiveSummarization(Task):
             "rouge2": True,
             "rougeL": True,
             "bert_score_f1": True,
-            "bart_score": True,
+            # "bart_score": True,
         }
 
     def construct_requests(self, doc, ctx):
@@ -368,12 +370,12 @@ class AbstractiveSummarization(Task):
         res = self.bert_score(items)
         return sum(res["f1"]) / len(res["f1"])
 
-    def bart_score(self, items):
-        golds, preds = zip(*items)
-        bart_scorer = BARTScorer(device="cuda", checkpoint="facebook/bart-large-cnn")
-        bart_scorer.load(path="src/metrics/BARTScore/bart_score.pth")
-        res = bart_scorer.score(srcs=preds, tgts=golds, batch_size=8)
-        return sum(res) / len(res)
+    # def bart_score(self, items):
+    #     golds, preds = zip(*items)
+    #     bart_scorer = BARTScorer(device="cuda", checkpoint="facebook/bart-large-cnn")
+    #     bart_scorer.load(path="src/metrics/BARTScore/bart_score.pth")
+    #     res = bart_scorer.score(srcs=preds, tgts=golds, batch_size=8)
+    #     return sum(res) / len(res)
 
     def aggregation(self):
         return {
@@ -381,7 +383,7 @@ class AbstractiveSummarization(Task):
             "rouge2": self.rouge2,
             "rougeL": self.rougeL,
             "bert_score_f1": self.bert_score_f1,
-            "bart_score": self.bart_score,
+            # "bart_score": self.bart_score,
         }
 
 
@@ -634,10 +636,10 @@ class QA(Task):
         return req
 
     def has_training_docs(self):
-        return True
+        return False
 
     def has_validation_docs(self):
-        return True
+        return False
 
     def has_test_docs(self):
         return True
@@ -651,15 +653,30 @@ class QA(Task):
     def test_docs(self):
         return self.dataset["test"]
 
-    def should_decontaminate(self):
-        return True
-
-    def doc_to_decontamination_query(self, doc):
-        return doc["text"]
-
     def doc_to_text(self, doc):
         # TODO: Format the query prompt portion of the document example.
         return doc["query"]
+
+    def doc_to_target(self, doc):
+        return doc["answer"]
+
+    def process_results(self, doc, results):
+        return {
+            "rouge1": (doc["answer"], results[0]),
+            "rouge2": (doc["answer"], results[0]),
+            "rougeL": (doc["answer"], results[0]),
+            "bert_score_f1": (doc["answer"], results[0]),
+            # "bart_score": (doc["answer"], results[0]),
+        }
+
+    def higher_is_better(self):
+        return {
+            "rouge1": True,
+            "rouge2": True,
+            "rougeL": True,
+            "bert_score_f1": True,
+            # "bart_score": True,
+        }
 
     def construct_requests(self, doc, ctx):
         """Uses RequestFactory to construct Requests and returns an iterable of
@@ -675,26 +692,209 @@ class QA(Task):
         cont_request = rf.greedy_until(ctx, {"until": None})
         return cont_request
 
+    def rouge_score(self, items):
+        golds, preds = zip(*items)
+        rouge = evaluate.load("rouge")
+        results = rouge.compute(predictions=preds, references=golds)
+        return results
+
+    def rouge1(self, items):
+        results = self.rouge_score(items)
+        return results["rouge1"]
+
+    def rouge2(self, items):
+        results = self.rouge_score(items)
+        return results["rouge2"]
+
+    def rougeL(self, items):
+        results = self.rouge_score(items)
+        return results["rougeL"]
+
+    def is_whitespace_string(s):
+        return s.isspace()
+
+    def rougeChinese(self, items):
+        jieba.load_userdict("/root/autodl-tmp/PIXIU/models/审计分词表.txt")
+        hyps, refs = map(list, zip(*[[' '.join(jieba.cut(d[0])), ' '.join(jieba.cut(d[1]))] for d in items]))
+        filter_hyps = []
+        filter_refs = []
+        for i in range(len(hyps)):
+            hyp = hyps[i]
+            ref = refs[i]
+            # if self.is_whitespace_string(hyp) or self.is_whitespace_string(ref):
+            #     continue
+            if hyp != '' and ref != '':
+                filter_hyps.append(hyp)
+                filter_refs.append(ref)
+        rouge = Rouge()
+        scores = rouge.get_scores(filter_hyps, filter_refs, avg=True, ignore_empty=True)
+        return scores
+
+    def bert_score(self, items):
+        if getattr(self, "_cache_bertscore", None) is None:
+            golds, preds = zip(*items)
+            bertscore = evaluate.load("/root/autodl-tmp/PIXIU/src/evaluate-metric/bertscore")
+            self._cache_bertscore = bertscore.compute(
+                predictions=preds,
+                references=golds,
+                model_type="bert-base-chinese",
+            )
+            return self._cache_bertscore
+        else:
+            return self._cache_bertscore
+
+    def bert_score_f1(self, items):
+        res = self.bert_score(items)
+        return sum(res["f1"]) / len(res["f1"])
+        # return res
+
+    def bart_score(self, items):
+        golds, preds = zip(*items)
+        # bart-base-chinese路径设置
+        bart_scorer = BARTScorer(device="cuda", checkpoint="/root/autodl-tmp/PIXIU/models/bart")
+        res = bart_scorer.score(srcs=preds, tgts=golds, batch_size=8)
+        return sum(res) / len(res)
+        # return res
+
+    def aggregation(self):
+        return {
+            "rouge1": self.rouge1,
+            "rouge2": self.rouge2,
+            "rougeL": self.rougeL,
+            "bert_score_f1": self.bert_score_f1,
+            "bart_score": self.bart_score,
+        }
+
+class QA_zh(Task):
+    VERSION = 1
+    DATASET_NAME = None
+    EVAL_LAST_TURN = True
+
+    def reformulate_turn_req(self, req, turn_request, turn):
+        return req
+
+    def has_training_docs(self):
+        return False
+
+    def has_validation_docs(self):
+        return False
+
+    def has_test_docs(self):
+        return True
+
+    def training_docs(self):
+        return self.dataset["train"]
+
+    def validation_docs(self):
+        return self.dataset["validation"]
+
+    def test_docs(self):
+        return self.dataset["test"]
+
+    def doc_to_text(self, doc):
+        # TODO: Format the query prompt portion of the document example.
+        return doc["query"]
+
     def doc_to_target(self, doc):
         return doc["answer"]
 
     def process_results(self, doc, results):
-        gold = doc["answer"]
-
-        acc = 1.0 if results[0].strip() == gold else 0.0
-
         return {
-            "acc": acc,
+            "rouge1": (doc["answer"], results[0]),
+            "rouge2": (doc["answer"], results[0]),
+            "rougeL": (doc["answer"], results[0]),
+            "bert_score_f1": (doc["answer"], results[0]),
+            # "bart_score": (doc["answer"], results[0]),
         }
 
     def higher_is_better(self):
         return {
-            "acc": True,
+            "rouge1": True,
+            "rouge2": True,
+            "rougeL": True,
+            "bert_score_f1": True,
+            # "bart_score": True,
         }
+
+    def construct_requests(self, doc, ctx):
+        """Uses RequestFactory to construct Requests and returns an iterable of
+        Requests which will be sent to the LM.
+
+        :param doc:
+            The document as returned from training_docs, validation_docs, or test_docs.
+        :param ctx: str
+            The context string, generated by fewshot_context. This includes the natural
+            language description, as well as the few shot examples, and the question
+            part of the document for `doc`.
+        """
+        cont_request = rf.greedy_until(ctx, {"until": None})
+        return cont_request
+
+    def rougeChinese(self, items):
+        jieba.load_userdict("/root/autodl-tmp/PIXIU/models/审计分词表.txt")
+        hyps, refs = map(list, zip(*[[' '.join(jieba.cut(d[0])), ' '.join(jieba.cut(d[1]))] for d in items]))
+        filter_hyps = []
+        filter_refs = []
+        for i in range(len(hyps)):
+            hyp = hyps[i]
+            ref = refs[i]
+            if self.is_whitespace_string(hyp) or self.is_whitespace_string(ref):
+                continue
+            if hyp != '' and ref != '':
+                filter_hyps.append(hyp)
+                filter_refs.append(ref)
+        rouge = Rouge()
+        scores = rouge.get_scores(filter_hyps, filter_refs, avg=True, ignore_empty=True)
+        return scores
+    def rouge1(self, items):
+        results = self.rougeChinese(items)
+        return results["rouge-1"]['f']
+
+    def rouge2(self, items):
+        results = self.rougeChinese(items)
+        return results["rouge-2"]['f']
+
+    def rougeL(self, items):
+        results = self.rougeChinese(items)
+        return results["rouge-l"]['f']
+
+    def is_whitespace_string(self, s):
+        return s.isspace()
+
+
+    def bert_score(self, items):
+        if getattr(self, "_cache_bertscore", None) is None:
+            golds, preds = zip(*items)
+            bertscore = evaluate.load("/root/autodl-tmp/PIXIU/src/evaluate-metric/bertscore")
+            self._cache_bertscore = bertscore.compute(
+                predictions=preds,
+                references=golds,
+                model_type="bert-base-chinese",
+            )
+            return self._cache_bertscore
+        else:
+            return self._cache_bertscore
+
+    def bert_score_f1(self, items):
+        res = self.bert_score(items)
+        return sum(res["f1"]) / len(res["f1"])
+        # return res
+
+    def bart_score(self, items):
+        golds, preds = zip(*items)
+        # bart-base-chinese路径设置
+        bart_scorer = BARTScorer(device="cuda", checkpoint="/root/autodl-tmp/PIXIU/models/bart")
+        res = bart_scorer.score(srcs=preds, tgts=golds, batch_size=8)
+        return sum(res) / len(res)
+        # return res
 
     def aggregation(self):
         return {
-            "acc": mean,
+            "rouge1": self.rouge1,
+            "rouge2": self.rouge2,
+            "rougeL": self.rougeL,
+            "bert_score_f1": self.bert_score_f1,
+            # "bart_score": self.bart_score,
         }
 
 
@@ -705,10 +905,14 @@ class FPB(Classification):
 class FIQASA(Classification):
     DATASET_PATH = "chancefocus/flare-fiqasa"
 
+class FinNL(Classification):
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/benchmark datatset/audit-problem entity classification"
+
 
 class NER(Task):
     VERSION = 1
-    DATASET_PATH = "chancefocus/flare-ner"
+    # DATASET_PATH = "chancefocus/flare-ner"
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/benchmark datatset/NER"
     DATASET_NAME = None
     EVAL_LAST_TURN = True
 
@@ -762,7 +966,7 @@ class NER(Task):
 
     def process_results(self, doc, results):
         text = doc["text"]
-        pred = process_text(results[0], text)
+        pred = process_zhtext(results[0], text)
 
         return {"entity_f1": (pred, doc["label"], results[0])}
 
@@ -782,9 +986,218 @@ class NER(Task):
             "entity_f1": self.entity_f1,
         }
 
+class FinQA(QA_zh):
+    DATASET_PATH = ""
 
-class FinQA(QA):
-    DATASET_PATH = "chancefocus/flare-finqa"
+# 自定义class
+class Classification_qwen(Task):
+    CALCULATE_MCC = True
+    LOWER_CASE = True
+    VERSION = 1
+    EVAL_LAST_TURN = True
+
+    def reformulate_turn_req(self, req, turn_request, turn):
+        return req
+
+    def has_training_docs(self):
+        return True
+
+    def has_validation_docs(self):
+        return True
+
+    def has_test_docs(self):
+        return True
+
+    def training_docs(self):
+        return self.dataset["train"]
+
+    def validation_docs(self):
+        return self.dataset["validation"]
+
+    def test_docs(self):
+        return self.dataset["test"]
+
+    def construct_requests(self, doc, ctx):
+        """Uses RequestFactory to construct Requests and returns an iterable of
+        Requests which will be sent to the LM.
+
+        :param doc:
+            The document as returned from training_docs, validation_docs, or test_docs.
+        :param ctx: str
+            The context string, generated by fewshot_context. This includes the natural
+            language description, as well as the few shot examples, and the question
+            part of the document for `doc`.
+        """
+        cont_request = rf.greedy_until(ctx, {"until": None})
+        return cont_request
+
+    def doc_to_decontamination_query(self, doc):
+        return doc["text"]
+
+    def doc_to_text(self, doc):
+        # TODO: Format the query prompt portion of the document example.
+        return doc["query"]
+
+    def doc_to_target(self, doc):
+        # TODO: Format the query prompt portion of the document example.
+        return doc["answer"]
+
+    def process_results(self, doc, results):
+        gold: str = doc["choices"][doc["gold"]]
+        if self.LOWER_CASE:
+            gold = gold.lower()
+        ini_result = results[0].strip()
+        if self.LOWER_CASE:
+            ini_result = ini_result.lower()
+
+
+        local = {}
+        for choice in doc["choices"]:
+            if self.LOWER_CASE:
+                choice = choice.lower()
+            if choice in ini_result:
+                local[choice] = ini_result.index(choice)
+        if local:
+            result = min(local, key=local.get)
+        else:
+            result = None
+
+
+        # result = None
+        # for choice in doc["choices"]:
+        #     if self.LOWER_CASE:
+        #         choice = choice.lower()
+        #     if choice in ini_result:
+        #         result = choice
+        #         break
+
+
+        if result is None:
+            result = "missing"
+
+        acc = 1.0 if gold == result else 0.0
+
+        results = {
+            "acc": acc,
+            "missing": int(result == "missing"),
+            "f1": (result, gold),
+            "macro_f1": (result, gold),
+        }
+
+        if self.CALCULATE_MCC:
+            results["mcc"] = (result, gold)
+
+        return results
+
+    def higher_is_better(self):
+        metrics = {
+            "acc": True,
+            "f1": True,
+            "macro_f1": True,
+            "missing": False,
+        }
+        if self.CALCULATE_MCC:
+            metrics["mcc"] = True
+        return metrics
+
+    def weighted_f1(self, items):
+        preds, golds = zip(*items)
+        labels = list(set(golds))
+        preds = np.array(preds)
+        golds = np.array(golds)
+        f1 = f1_score(golds, preds, average="weighted", labels=labels)
+        return f1
+
+    def macro_f1(self, items):
+        preds, golds = zip(*items)
+        labels = list(set(golds))
+        preds = np.array(preds)
+        golds = np.array(golds)
+        f1 = f1_score(golds, preds, average="macro", labels=labels)
+        return f1
+
+    def matthews_corrcoef(self, items):
+        preds, golds = zip(*items)
+        labels = {label: i for i, label in enumerate(list(set(golds)))}
+        preds = [labels.get(pred, -1) for pred in preds]
+        golds = [labels.get(gold, -1) for gold in golds]
+        return matthews_corrcoef(golds, preds)
+
+    def aggregation(self):
+        metrics = {
+            "acc": mean,
+            "missing": mean,
+            "f1": self.weighted_f1,
+            "macro_f1": self.macro_f1,
+        }
+        if self.CALCULATE_MCC:
+            metrics["mcc"] = self.matthews_corrcoef
+        return metrics
+
+class AuditQA_zh_audit_items_and_target(QA_zh):
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/benchmark datatset/audit items and target"
+
+class AuditQA_zh_audit_method_and_material(QA_zh):
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/benchmark datatset/audit method and material"
+
+class AuditQA_zh_audit_problem_describe(QA_zh):
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/benchmark datatset/audit problem describe"
+
+class AuditQA_zh_audit_problem_summary(QA_zh):
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/benchmark datatset/audit problem summary"
+
+class AuditQA_zh_Audit_legal_relevant_quesiton(QA_zh):
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/benchmark datatset/Audit-legal relevant quesiton"
+
+class AuditQA_zh_Definition_of_audit_entity(QA_zh):
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/benchmark datatset/Definition of audit entity"
+
+class AuditQA_zh_Other_question(QA_zh):
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/benchmark datatset/Other question"
+
+class AuditQA_zh_recommend_appropriate_laws(QA_zh):
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/benchmark datatset/recommend appropriate laws"
+
+
+
+class AuditQA_zh_Audit_document_generation(QA_zh):
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/benchmark datatset/Audit document generation"
+
+class AuditQA_zh_Audit_item_risk_problem_analysis(QA_zh):
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/benchmark datatset/Audit item_risk_problem analysis"
+
+
+
+class AuditNL_Audit_item_entity_classification(Classification_qwen):
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/benchmark datatset/Audit-item entity classification"
+
+class AuditNL_Audit_item_entity_classification_new(Classification_qwen):
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/benchmark datatset/Audit-item entity classification_new"
+
+class AuditNL_audit_problem_entity_classification(Classification_qwen):
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/benchmark datatset/audit-problem entity classification"
+
+class AuditNL_legal_name_classification(Classification_qwen):
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/benchmark datatset/legal name classification"
+
+class AuditRE_RE(Classification_qwen):
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/benchmark datatset/RE"
+
+
+class test_for_long_question(QA_zh):
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/benchmark datatset/test_for_long_question"
+
+
+class AuditNL_Audit_item_entity_classification_optimization(Classification_qwen):
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/dataset optimization/Audit-item entity classification optimization"
+
+class audit_problem_entity_classification_optimization(Classification_qwen):
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/dataset optimization/audit-problem entity classification optimization"
+
+class legal_name_classification_optimization(Classification_qwen):
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/corpus/dataset optimization/legal name classification optimization"
+
+
 
 
 class StockMovement(Classification):
@@ -1270,16 +1683,22 @@ class ZHAFQMC(Classification):
     DATASET_PATH = "ChanceFocus/flare-zh-afqmc"
 
 
+# class ZHAstock(Classification):
+#     DATASET_PATH = "ChanceFocus/flare-zh-stocka"
+
 class ZHAstock(Classification):
-    DATASET_PATH = "ChanceFocus/flare-zh-stocka"
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/new_corpus/astock_test"
 
 
 class ZHBQcourse(Classification):
     DATASET_PATH = "ChanceFocus/flare-zh-corpus"
 
 
+# class ZHFinEval(Classification):
+#     DATASET_PATH = "ChanceFocus/flare-zh-fineval"
+
 class ZHFinEval(Classification):
-    DATASET_PATH = "ChanceFocus/flare-zh-fineval"
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/new_corpus/fineval_test"
 
 
 class ZHstock11(Classification):
@@ -1289,8 +1708,11 @@ class ZHFinQA(QA):
     DATASET_PATH = "ChanceFocus/flare-zh-qa"
 
 
+# class ZHFinNA(AbstractiveSummarization):
+#     DATASET_PATH = "ChanceFocus/flare-zh-na"
+
 class ZHFinNA(AbstractiveSummarization):
-    DATASET_PATH = "ChanceFocus/flare-zh-na"
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data/new_corpus/na_test"
 
 
 class ZH21CCKS(RelationExtraction):
@@ -1348,7 +1770,8 @@ class ZH22CCKS(ZH19CCKS):
 
 
 class ZHNER(NER):
-    DATASET_PATH = "ChanceFocus/flare-zh-ner"
+    # DATASET_PATH = "ChanceFocus/flare-zh-ner"
+    DATASET_PATH = "/root/autodl-tmp/PIXIU/data"
 
     def process_results(self, doc, results):
         text = ' '.join(doc["text"])

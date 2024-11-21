@@ -1,10 +1,12 @@
-from pprint import pprint
-from typing import List, Union
-
-import json
-import lm_eval.base
-
 from . import flare
+import lm_eval.base
+import json
+from typing import List, Union
+from pprint import pprint
+import sys
+
+sys.path.append('../financial-evaluation')
+
 
 TASK_REGISTRY = {
     "flare_es_financees": flare.ESFINANCEES,
@@ -15,7 +17,8 @@ TASK_REGISTRY = {
     "flare_es_tsa": flare.ESTSA,
     "flare_fpb": flare.FPB,
     "flare_fiqasa": flare.FIQASA,
-    "flare_ner": flare.NER,
+
+    # "flare_ner": flare.ZHNER,
     "flare_finqa": flare.FinQA,
     "flare_convfinqa": flare.ConvFinQA,
     "flare_headlines": flare.Headlines,
@@ -56,6 +59,37 @@ TASK_REGISTRY = {
     **flare.SM_TASKS,
     "flare_finarg_ecc_auc_test": flare.FINARGECCAUC_test,
     "flare_edtsum_test": flare.EDTSUM_test,
+
+    "flare_finnl": flare.FinNL,
+
+    "Regulation_Audit_items_and_objectives": flare.AuditQA_zh_audit_items_and_target,
+    "Regulation_Audit_procedures_and_material": flare.AuditQA_zh_audit_method_and_material,
+    "Regulation_Audit_issue_describe": flare.AuditQA_zh_audit_problem_describe,
+    "Regulation_Audit_issue_summary": flare.AuditQA_zh_audit_problem_summary,
+    "Regulation_Audit_legal_relevant_question": flare.AuditQA_zh_Audit_legal_relevant_quesiton,
+    "Regulation_Definition_of_audit_entity": flare.AuditQA_zh_Definition_of_audit_entity,
+    "Regulation_Other_question": flare.AuditQA_zh_Other_question,
+    "Regulation_Legal_recommendation": flare.AuditQA_zh_recommend_appropriate_laws,
+
+    "Regulation_Relation_Classification": flare.AuditRE_RE,
+
+    # "AuditNL_Audit_item_entity_classification": flare.AuditNL_Audit_item_entity_classification,
+    # "AuditNL_audit_problem_entity_classification": flare.AuditNL_audit_problem_entity_classification,
+    # "AuditNL_legal_name_classification": flare.AuditNL_legal_name_classification,
+
+    "Regulation_NER": flare.NER,
+
+    "Regulation_Audit_case_report_generation": flare.AuditQA_zh_Audit_document_generation,
+    "Regulation_Risk_problem_analysis": flare.AuditQA_zh_Audit_item_risk_problem_analysis,
+
+    "Regulation_Audit_entity_classification": flare.AuditNL_Audit_item_entity_classification_optimization,
+    "Regulation_Audit_problem_entity_classification": flare.audit_problem_entity_classification_optimization,
+    "Regulation_Legal_name_classification": flare.legal_name_classification_optimization,
+
+    "ZHFinEval": flare.ZHFinEval,
+    "ZHAstock": flare.ZHAstock,
+    "ZHFinNA": flare.ZHFinNA
+
 }
 
 ALL_TASKS = sorted(list(TASK_REGISTRY))
@@ -127,5 +161,6 @@ def get_task_dict(task_name_list: List[Union[str, lm_eval.base.Task]]):
         for task_object in task_name_list
         if not isinstance(task_object, str)
     }
-    assert set(task_name_dict.keys()).isdisjoint(set(task_name_from_object_dict.keys()))
+    assert set(task_name_dict.keys()).isdisjoint(
+        set(task_name_from_object_dict.keys()))
     return {**task_name_dict, **task_name_from_object_dict}

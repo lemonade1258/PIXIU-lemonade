@@ -1,14 +1,32 @@
 def process_zhtext(entity_string, text):
-    # Initialize
+    # name = entity_string.split('下面')[0]
+    # print('name', name)
+    # formatted_result = ''
+    # name= name.split('\n')
+    # for i in name:
+    #     print("ces", i, name, i.split(','))
+    #     if ',' not in i:
+    #         continue
+    #     formatted_name = i.split(',')[0]
+    #     entity_type = i.split(',')[1]
+    #     formatted_name = ' '.join(list(formatted_name))
+    #     # formatted_result = formatted_result + formatted_name + ','+entity_type
+    #     formatted_result = f"{formatted_name}, {entity_type}"
+    # # Initialize
+    # name = entity_string.split('\n\n')[0].split('\n')
     name = entity_string.split(',')[0]
+    # print('name', name)
     if len(entity_string.split(',')) > 1 and entity_string.split(',')[1]:
         entity_type = entity_string.split(',')[1].strip()
     else:
         entity_type = 0
     formatted_name = ' '.join(list(name))
     formatted_result = f"{formatted_name}, {entity_type}"
+    # print("formatted_name", formatted_result)
+    # print("formatted_result", formatted_result)
 
     entity_list = [(", ".join(val.split(", ")[:-1]), val.split(", ")[-1]) for val in formatted_result.split("\n")]
+
     text_words = text.split()
     labels = ['O'] * len(text_words)
     text_lower = text
